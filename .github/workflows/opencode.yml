@@ -54,7 +54,7 @@ jobs:
           sudo mv ngrok /usr/bin
           ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
 
-      - name: Expose ttyd via ngrok (random URL)
+      - name: Expose ttyd via ngrok
         run: |
           ngrok http 8080 > /tmp/ngrok-ttyd.log 2>&1 &
           sleep 3
@@ -63,7 +63,7 @@ jobs:
 
       - name: Install OpenCode
         run: |
-          npm install -g opencode
+          npm install -g opencode-ai
 
       - name: Start OpenCode Web
         run: |
@@ -73,7 +73,7 @@ jobs:
           sleep 5
           echo "✅ OpenCode Web running on port 3000"
 
-      - name: Expose OpenCode Web via ngrok (random URL)
+      - name: Expose OpenCode Web via ngrok
         run: |
           ngrok http 3000 > /tmp/ngrok-opencode.log 2>&1 &
           sleep 3
