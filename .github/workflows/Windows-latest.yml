@@ -4,24 +4,27 @@ on: workflow_dispatch
 
 jobs:
   boot:
+
     runs-on: windows-latest
 
     steps:
     - name: Download bore
       run: |
-        $api = Invoke-RestMethod "https://api.github.com/repos/ekzhang/bore/releases/latest"
-        $url = ($api.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip" } | Select-Object -First 1).browser_download_url
-        Invoke-WebRequest $url -OutFile bore.zip
+        # Try API first, fallback to direct download if rate limited
+        try {
+          $api = Invoke-RestMethod "https://api.github.com/repos/ekzhang/bore/releases/latest"
+          $url = ($api.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip" } | Select-Object -First 1).browser_download_url
+          Invoke-WebRequest $url -OutFile bore.zip
+        } catch {
+          Write-Host "API rate limited, using known download URL..."
+          Invoke-WebRequest "https://github.com/ekzhang/bore/releases/latest/download/bore-windows.zip" -OutFile bore.zip
+        }
         Expand-Archive bore.zip -DestinationPath .
-
-    - name: Enable Remote Desktop
-      run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-
-    - name: Set RDP password
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-
-    - name: Create tunnel to bore.pub:10238
+        
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+    - name: Create Tunnel
       run: .\bore.exe local 3389 --to bore.pub:10238
