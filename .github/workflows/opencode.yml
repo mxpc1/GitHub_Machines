@@ -92,26 +92,53 @@ jobs:
           echo "🔗 OpenCode Web URL: $OPENCODE_URL"
           echo "✅ Open this URL directly — it goes straight to the OpenCode Web UI, no terminal typing needed."
 
-      - name: Periodic Git backup (every 5 min)
+      - name: Set up backup helper script
         run: |
+          cat > /tmp/backup.sh << 'EOF'
+          #!/bin/bash
           cd /tmp/repo
-          while true; do
-            sleep 300
-            echo "⏳ Backing up changes..."
-            git add -A
-            if git diff --staged --quiet; then
-              echo "ℹ️ No changes"
-            else
-              git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
-              git push origin HEAD
-              echo "✅ Backup pushed"
-            fi
-          done &
+          git add -A
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes"
+          else
+            git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
+            git push origin HEAD
+            echo "✅ Backup pushed"
+          fi
+          EOF
+          chmod +x /tmp/backup.sh
 
-      - name: Keep alive
+      - name: Periodic Git backup (every 60s)
+        run: |
+          while true; do
+            sleep 60
+            echo "⏳ Backing up changes..."
+            /tmp/backup.sh
+          done &
+          echo $! > /tmp/backup-loop.pid
+
+      - name: Keep alive (with final backup on shutdown)
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "🔗 Check the OpenCode URL printed above."
-          echo "📂 All data stored in /tmp/repo and backed up every 5 min"
+          echo "📂 All data stored in /tmp/repo and backed up every 60s"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          tail -f /dev/null
+
+          finalize() {
+            echo "🛑 Caught shutdown signal — running final backup before exit..."
+            /tmp/backup.sh
+            # Also stop the periodic loop cleanly so it doesn't race the final push
+            if [ -f /tmp/backup-loop.pid ]; then
+              kill "$(cat /tmp/backup-loop.pid)" 2>/dev/null || true
+            fi
+            echo "✅ Final backup complete. Exiting."
+            exit 0
+          }
+          trap finalize SIGTERM SIGINT
+
+          # Wait in a loop (instead of a plain blocking command) so the trap
+          # can actually interrupt and run when a signal arrives.
+          while true; do
+            sleep 5 &
+            wait $!
+          done
