@@ -26,7 +26,7 @@ jobs:
       # Only your actual project code lives here. Never anything sensitive.
       - name: Clone public project repo
         run: |
-          cd /tmp
+          cd $HOME
           git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
           cd repo
           DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
@@ -38,7 +38,7 @@ jobs:
           echo ".opencode/" >> .gitignore
           git add .gitignore
           git commit -m "Ignore .opencode in public repo" || true
-          echo "✅ Public project dir: /tmp/repo"
+          echo "✅ Public project dir: $HOME/repo"
 
       # ── PRIVATE data repo — THIS is the agent's primary workspace ──────
       # Anything the agent creates/reads by default lives here, at the
@@ -47,13 +47,13 @@ jobs:
       # PAT scoped to that repo only).
       - name: Clone private data repo (primary workspace)
         run: |
-          cd /tmp
+          cd $HOME
           git clone https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${{ secrets.PRIVATE_DATA_REPO }}.git private-data
           cd private-data
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p .opencode
-          echo "✅ Private workspace (primary): /tmp/private-data"
+          echo "✅ Private workspace (primary): $HOME/private-data"
 
       # Pull the public project in as a subfolder of the private workspace,
       # via symlink, so the agent can see/edit it too — but the private
@@ -61,12 +61,12 @@ jobs:
       # belongs to a different repo's history.
       - name: Link public project into private workspace
         run: |
-          cd /tmp/private-data
-          ln -s /tmp/repo public-project
+          cd $HOME/private-data
+          ln -s $HOME/repo public-project
           echo "public-project" >> .gitignore
           git add .gitignore
           git commit -m "Ignore public-project symlink in private repo" || true
-          echo "✅ Agent working directory: /tmp/private-data (root = private repo)"
+          echo "✅ Agent working directory: $HOME/private-data (root = private repo)"
           echo "✅ Public project reachable at ./public-project/ — pushed only to the public repo"
 
       - name: Install ngrok
@@ -82,12 +82,12 @@ jobs:
           npm install -g opencode-ai
 
       # ── System prompt now lives IN the private repo, not a secret ──────
-      # Edit /tmp/private-data/prompt.txt any time (even from inside the
+      # Edit $HOME/private-data/prompt.txt any time (even from inside the
       # OpenCode web UI itself) — it's read fresh on every start/restart.
       # First run creates a placeholder if the file doesn't exist yet.
       - name: Set up cybersecurity agent prompt from private repo file
         run: |
-          cd /tmp/private-data
+          cd $HOME/private-data
           if [ ! -f prompt.txt ]; then
             cat > prompt.txt << 'EOF'
           # Security Agent
@@ -106,15 +106,15 @@ jobs:
           fi
           mkdir -p ~/.config/opencode/agent
           cp prompt.txt ~/.config/opencode/agent/security.md
-          echo "✅ Cybersecurity agent prompt loaded from /tmp/private-data/prompt.txt"
+          echo "✅ Cybersecurity agent prompt loaded from $HOME/private-data/prompt.txt"
 
       - name: Start OpenCode Web (with verification)
         run: |
-          cd /tmp/private-data
-          export OPENCODE_DATA_DIR=/tmp/private-data/.opencode
+          cd $HOME/private-data
+          export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
 
           # Launch inside screen so it survives, logging to a file we can inspect
-          screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee /tmp/opencode.log"
+          screen -dmS opencode bash -c "cd $HOME/private-data && OPENCODE_DATA_DIR=$HOME/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee /tmp/opencode.log"
 
           # Actively wait for it to respond instead of a blind sleep
           echo "⏳ Waiting for OpenCode Web to come up on port 3000..."
@@ -133,14 +133,14 @@ jobs:
 
       - name: Keep OpenCode Web alive (auto-restart watchdog)
         run: |
-          cd /tmp/private-data
+          cd $HOME/private-data
           nohup bash -c '
             while true; do
               if ! curl -s -o /dev/null http://localhost:3000; then
                 echo "⚠️ OpenCode Web not responding, restarting..."
-                cp /tmp/private-data/prompt.txt ~/.config/opencode/agent/security.md
+                cp $HOME/private-data/prompt.txt ~/.config/opencode/agent/security.md
                 screen -S opencode -X quit || true
-                screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
+                screen -dmS opencode bash -c "cd $HOME/private-data && OPENCODE_DATA_DIR=$HOME/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
@@ -160,7 +160,7 @@ jobs:
         run: |
           cat > /tmp/backup-public.sh << 'EOF'
           #!/bin/bash
-          cd /tmp/repo
+          cd $HOME/repo
           git add -A
           if git diff --staged --quiet; then
             echo "ℹ️ No public changes"
@@ -174,7 +174,7 @@ jobs:
 
           cat > /tmp/backup-private.sh << 'EOF'
           #!/bin/bash
-          cd /tmp/private-data
+          cd $HOME/private-data
           git add -A
           if git diff --staged --quiet; then
             echo "ℹ️ No private changes"
