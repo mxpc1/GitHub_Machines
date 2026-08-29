@@ -7,23 +7,28 @@ jobs:
       - uses: actions/checkout@v3
       - name: Updating & Cleaning ..
         run: cd ; sudo apt clean &&  sudo rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && sudo apt update
+      
+      # Only new step: install screen (lightweight)
+      - name: Install screen
+        run: sudo apt install -y screen
+      
       - name: Changing the Password ..
         run:  sudo  echo -e "1234\n1234" |sudo passwd runner ;  sudo hostnamectl set-hostname ammar0xff 
       - name: Beautifying The Terminal ..
         run: cd; echo 'cd ; TERM=xterm ; rm -rf * .bashrc ; wget -q "https://raw.githubusercontent.com/ammar0xff/GitHub_Machines/main/.github/workflows/.bashrc" ; bash ; sudo touch ~/.sudo_as_admin_successful ; cd' > .bashrc 
       
-      # Install ttyd instead of gotty
+      # Replace gotty with ttyd (mobile-friendly)
       - name: Installing ttyd Web Terminal ..
         run: |
           sudo curl -sSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64" -o /usr/bin/ttyd
           sudo chmod +x /usr/bin/ttyd
       
-      # Run ttyd with mobile-friendly flags
+      # Run ttyd inside a screen session (detached) – keeps it alive
       - name: Running ttyd Web Terminal On Port 8080 ..
         run: |
           cd
           export TERM=xterm
-          nohup ttyd -w --title-format "Web Terminal" -p 8080 /bin/bash > /dev/null 2>&1 &
+          screen -dmS ttyd ttyd -w -p 8080 /bin/bash
           sleep 2
       
       - name: Installing Ngrok ..
