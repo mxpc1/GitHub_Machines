@@ -7,74 +7,16 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Download bore
-        run: |
-          try {
-            $api = Invoke-RestMethod "https://api.github.com/repos/ekzhang/bore/releases/latest"
-            $asset = $api.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip" } | Select-Object -First 1
-            $url = $asset.browser_download_url
-            Invoke-WebRequest $url -OutFile bore.zip
-          } catch {
-            Invoke-WebRequest "https://github.com/ekzhang/bore/releases/latest/download/bore-windows-x86_64.zip" -OutFile bore.zip
-          }
-          Expand-Archive bore.zip -DestinationPath .
-
-      - name: Enable Remote Desktop
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-
-      - name: Set RDP password
-        run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-
-      - name: Force DNS resolution for bore.pub
-        run: |
-          # Resolve with Google DNS and add to hosts
-          $ip = (Resolve-DnsName bore.pub -Type A -Server 8.8.8.8 | Select-Object -First 1).IPAddress
-          Write-Host "Resolved IP: $ip"
-          # Append to hosts file
-          Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n$ip bore.pub" -Force
-          # Flush DNS cache
-          ipconfig /flushdns
-          # Verify resolution
-          ping bore.pub -n 1
-
-      - name: Test port connectivity
-        run: |
-          # Check if 10238 is open on bore.pub
-          Test-NetConnection -ComputerName bore.pub -Port 10238 -WarningAction SilentlyContinue
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Port 10238 on bore.pub is not reachable. Trying IP directly..."
-          }
-
-      - name: Create tunnel to bore.pub:10238
-        run: |
-          function Start-Bore {
-            param([string]$Remote)
-            $tries = 0
-            $maxTries = 5
-            while ($tries -lt $maxTries) {
-              $tries++
-              Write-Host "Attempt $tries of $maxTries - connecting to $Remote"
-              # Run bore and capture exit code
-              .\bore.exe local 3389 --to $Remote
-              if ($LASTEXITCODE -eq 0) {
-                Write-Host "Tunnel established!"
-                return $true
-              }
-              Write-Host "Failed (exit $LASTEXITCODE). Retrying in $($tries*3) seconds..."
-              Start-Sleep -Seconds ($tries * 3)
-            }
-            return $false
-          }
-
-          # First try with domain (hosts file should resolve it)
-          if (Start-Bore "bore.pub:10238") { exit 0 }
-
-          Write-Host "Domain failed, falling back to IP..."
-          $ip = (Resolve-DnsName bore.pub -Type A -Server 8.8.8.8 | Select-Object -First 1).IPAddress
-          if (Start-Bore "$($ip):10238") { exit 0 }
-
-          Write-Error "All connection attempts failed."
-          exit 1
+    - name: Download bore
+      run: |
+        $api = Invoke-RestMethod "https://api.github.com/repos/ekzhang/bore/releases/latest"
+        $url = ($api.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip" } | Select-Object -First 1).browser_download_url
+        Invoke-WebRequest $url -OutFile bore.zip
+        Expand-Archive bore.zip -DestinationPath .
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+    - name: Create Tunnel
+      run: .\bore.exe local 3389 --to bore.pub
