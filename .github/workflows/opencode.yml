@@ -114,7 +114,7 @@ jobs:
           export OPENCODE_DATA_DIR=/tmp/private-data/.opencode
 
           # Launch inside screen so it survives, logging to a file we can inspect
-          screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 --agent security 2>&1 | tee /tmp/opencode.log"
+          screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee /tmp/opencode.log"
 
           # Actively wait for it to respond instead of a blind sleep
           echo "⏳ Waiting for OpenCode Web to come up on port 3000..."
@@ -140,7 +140,7 @@ jobs:
                 echo "⚠️ OpenCode Web not responding, restarting..."
                 cp /tmp/private-data/prompt.txt ~/.config/opencode/agent/security.md
                 screen -S opencode -X quit || true
-                screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 --agent security 2>&1 | tee -a /tmp/opencode.log"
+                screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
