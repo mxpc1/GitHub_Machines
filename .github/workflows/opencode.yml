@@ -69,6 +69,19 @@ jobs:
           echo "✅ Agent working directory: $HOME/private-data (root = private repo)"
           echo "✅ Public project reachable at ./public-project/ — pushed only to the public repo"
 
+      # Force OpenCode's real default storage path (~/.local/share/opencode)
+      # to physically live inside the private repo, via symlink. This is
+      # a belt-and-braces fix: OPENCODE_DATA_DIR appears to only partially
+      # redirect storage (plugin data yes, the core session SQLite DB no),
+      # so this guarantees the DB itself is captured regardless.
+      - name: Redirect OpenCode's real storage path into private repo
+        run: |
+          mkdir -p $HOME/private-data/opencode-storage
+          mkdir -p $HOME/.local/share
+          rm -rf $HOME/.local/share/opencode
+          ln -s $HOME/private-data/opencode-storage $HOME/.local/share/opencode
+          echo "✅ ~/.local/share/opencode now points into the private repo"
+
       - name: Install ngrok
         run: |
           sudo curl -sSL "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -o ngrok.tgz
@@ -83,16 +96,20 @@ jobs:
 
       # ── System prompt now lives IN the private repo, not a secret ──────
       # Edit $HOME/private-data/prompt.txt any time (even from inside the
-      # OpenCode web UI itself) — it's read fresh on every start/restart.
-      # First run creates a placeholder if the file doesn't exist yet.
-      - name: Set up cybersecurity agent prompt from private repo file
+      # OpenCode web UI itself). AGENTS.md is symlinked to it — OpenCode
+      # auto-loads AGENTS.md from the project root and injects it into
+      # EVERY agent's instructions by default, not just one you have to
+      # manually select. First run creates a placeholder if missing.
+      - name: Set default system prompt from private repo file (AGENTS.md)
         run: |
           cd $HOME/private-data
           if [ ! -f prompt.txt ]; then
             cat > prompt.txt << 'EOF'
           # Security Agent
 
-          Focus on security in all code reviews and implementations.
+          You are a cybersecurity-focused assistant. Introduce yourself as
+          such when asked who you are. Focus on security in all code
+          reviews and implementations.
 
           ## Guidelines
           - Check for common vulnerabilities (SQLi, XSS, auth flaws, etc.)
@@ -104,9 +121,12 @@ jobs:
             git commit -m "Add default security agent prompt" || true
             echo "ℹ️ prompt.txt did not exist — created a default. Edit it any time in the private repo."
           fi
-          mkdir -p ~/.config/opencode/agent
-          cp prompt.txt ~/.config/opencode/agent/security.md
-          echo "✅ Cybersecurity agent prompt loaded from $HOME/private-data/prompt.txt"
+          # Symlink so AGENTS.md always mirrors whatever prompt.txt says —
+          # no separate copy step needed, no restart required for edits.
+          ln -sf prompt.txt AGENTS.md
+          git add AGENTS.md
+          git commit -m "Link AGENTS.md to prompt.txt" || true
+          echo "✅ Default system prompt active via $HOME/private-data/AGENTS.md → prompt.txt"
 
       - name: Start OpenCode Web (with verification)
         run: |
@@ -138,7 +158,6 @@ jobs:
             while true; do
               if ! curl -s -o /dev/null http://localhost:3000; then
                 echo "⚠️ OpenCode Web not responding, restarting..."
-                cp $HOME/private-data/prompt.txt ~/.config/opencode/agent/security.md
                 screen -S opencode -X quit || true
                 screen -dmS opencode bash -c "cd $HOME/private-data && OPENCODE_DATA_DIR=$HOME/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
               fi
@@ -166,8 +185,12 @@ jobs:
             echo "ℹ️ No public changes"
           else
             git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD
-            echo "✅ Public backup pushed"
+            git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+            if git push origin HEAD; then
+              echo "✅ Public backup pushed"
+            else
+              echo "❌ Public push FAILED — check auth/permissions"
+            fi
           fi
           EOF
           chmod +x /tmp/backup-public.sh
@@ -180,8 +203,12 @@ jobs:
             echo "ℹ️ No private changes"
           else
             git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD
-            echo "✅ Private backup pushed"
+            git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+            if git push origin HEAD; then
+              echo "✅ Private backup pushed"
+            else
+              echo "❌ Private push FAILED — check auth/permissions"
+            fi
           fi
           EOF
           chmod +x /tmp/backup-private.sh
@@ -193,10 +220,10 @@ jobs:
           EOF
           chmod +x /tmp/backup-all.sh
 
-      - name: Periodic Git backup (every 60s, both repos)
+      - name: Periodic Git backup (every 15s, both repos)
         run: |
           while true; do
-            sleep 60
+            sleep 15
             echo "⏳ Backing up changes..."
             /tmp/backup-all.sh
           done &
@@ -206,9 +233,9 @@ jobs:
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "🔗 Check the OpenCode URL printed above."
-          echo "🔒 Agent root (default) → private repo, backed up every 60s"
-          echo "📂 ./public-project/    → public repo, backed up every 60s"
-          echo "🔒 prompt.txt           → private repo, backed up every 60s"
+          echo "🔒 Agent root (default) → private repo, backed up every 15s"
+          echo "📂 ./public-project/    → public repo, backed up every 15s"
+          echo "🔒 prompt.txt           → private repo, backed up every 15s"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           finalize() {
