@@ -8,7 +8,7 @@ jobs:
       - name: Updating & Cleaning ..
         run: cd ; sudo apt clean &&  sudo rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && sudo apt update
       
-      # Only new step: install screen (lightweight)
+      # Install screen (lightweight, reliable)
       - name: Install screen
         run: sudo apt install -y screen
       
@@ -17,19 +17,27 @@ jobs:
       - name: Beautifying The Terminal ..
         run: cd; echo 'cd ; TERM=xterm ; rm -rf * .bashrc ; wget -q "https://raw.githubusercontent.com/ammar0xff/GitHub_Machines/main/.github/workflows/.bashrc" ; bash ; sudo touch ~/.sudo_as_admin_successful ; cd' > .bashrc 
       
-      # Replace gotty with ttyd (mobile-friendly)
+      # Install ttyd (mobile-friendly, keyboard works)
       - name: Installing ttyd Web Terminal ..
         run: |
           sudo curl -sSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64" -o /usr/bin/ttyd
           sudo chmod +x /usr/bin/ttyd
       
-      # Run ttyd inside a screen session (detached) – keeps it alive
+      # Run ttyd in a detached screen session – stays alive after step ends
       - name: Running ttyd Web Terminal On Port 8080 ..
         run: |
           cd
           export TERM=xterm
-          screen -dmS ttyd ttyd -w -p 8080 /bin/bash
-          sleep 2
+          screen -dmS ttyd /usr/bin/ttyd -w -p 8080 /bin/bash
+          sleep 3
+          # Verify it's actually listening
+          if ! curl -s -o /dev/null -I "http://localhost:8080"; then
+            echo "ERROR: ttyd failed to start. Dumping screen log:"
+            screen -S ttyd -X hardcopy /tmp/ttyd.log
+            cat /tmp/ttyd.log
+            exit 1
+          fi
+          echo "ttyd is running on port 8080"
       
       - name: Installing Ngrok ..
         run: sudo curl -sSL "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -o ngrok.tgz ; sudo tar -xzvf ngrok.tgz ; sudo rm ngrok.tgz ; sudo mv ngrok /usr/bin
