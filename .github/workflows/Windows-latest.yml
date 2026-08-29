@@ -9,7 +9,7 @@ jobs:
     steps:
       - name: Download bore
         run: |
-          # Try API first (to get the exact latest asset name)
+          # Try API first, fallback to known direct URL
           try {
             $api = Invoke-RestMethod "https://api.github.com/repos/ekzhang/bore/releases/latest"
             $asset = $api.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip" } | Select-Object -First 1
@@ -18,7 +18,6 @@ jobs:
             Invoke-WebRequest $url -OutFile bore.zip
           } catch {
             Write-Host "API failed, using known direct URL..."
-            # Fallback to the current known pattern
             Invoke-WebRequest "https://github.com/ekzhang/bore/releases/latest/download/bore-windows-x86_64.zip" -OutFile bore.zip
           }
           Expand-Archive bore.zip -DestinationPath .
@@ -32,26 +31,31 @@ jobs:
       - name: Set RDP password
         run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
-      - name: Create tunnel to bore.pub:10238
+      - name: Add bore.pub to hosts file
         run: |
-          # Resolve bore.pub using Google DNS (bypasses system DNS issues)
           $ip = (Resolve-DnsName bore.pub -Type A -Server 8.8.8.8 | Select-Object -First 1).IPAddress
           Write-Host "Resolved bore.pub to $ip"
+          # Add entry to hosts (requires admin, which runner has)
+          Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n$ip bore.pub" -Force
+          # Verify
+          Get-Content "$env:SystemRoot\System32\drivers\etc\hosts"
 
+      - name: Create tunnel to bore.pub:10238
+        run: |
           $tries = 0
           $maxTries = 3
           while ($tries -lt $maxTries) {
             $tries++
             Write-Host "Attempt $tries of $maxTries"
-            .\bore.exe local 3389 --to "${ip}:10238"
-            if ($LASTEXITCODE -eq 0) { 
+            .\bore.exe local 3389 --to bore.pub:10238
+            if ($LASTEXITCODE -eq 0) {
               Write-Host "Tunnel established successfully!"
-              break 
+              break
             }
             Write-Host "Tunnel failed, retrying in 5 seconds..."
             Start-Sleep -Seconds 5
           }
-          if ($LASTEXITCODE -ne 0) { 
+          if ($LASTEXITCODE -ne 0) {
             Write-Error "Tunnel could not be established after $maxTries attempts."
             exit 1
           }
