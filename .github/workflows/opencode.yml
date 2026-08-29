@@ -22,7 +22,9 @@ jobs:
           echo -e "1234\n1234" | sudo passwd runner
           sudo hostnamectl set-hostname ammar0xff
 
-      - name: Clone repo for persistence
+      # ── PUBLIC project repo (this repo, may go public) ─────────────────
+      # Only your actual project code lives here. Never anything sensitive.
+      - name: Clone public project repo
         run: |
           cd /tmp
           git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
@@ -31,8 +33,41 @@ jobs:
           git checkout $DEFAULT_BRANCH
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Belt-and-braces: even if something ever writes here by mistake,
+          # never let it get committed to the public repo.
+          echo ".opencode/" >> .gitignore
+          git add .gitignore
+          git commit -m "Ignore .opencode in public repo" || true
+          echo "✅ Public project dir: /tmp/repo"
+
+      # ── PRIVATE data repo — THIS is the agent's primary workspace ──────
+      # Anything the agent creates/reads by default lives here, at the
+      # root of this repo. Requires secrets: PRIVATE_DATA_REPO
+      # ("you/opencode-private-data") and PRIVATE_REPO_TOKEN (fine-grained
+      # PAT scoped to that repo only).
+      - name: Clone private data repo (primary workspace)
+        run: |
+          cd /tmp
+          git clone https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${{ secrets.PRIVATE_DATA_REPO }}.git private-data
+          cd private-data
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p .opencode
-          echo "✅ Work directory: /tmp/repo"
+          echo "✅ Private workspace (primary): /tmp/private-data"
+
+      # Pull the public project in as a subfolder of the private workspace,
+      # via symlink, so the agent can see/edit it too — but the private
+      # repo's own git is told to ignore that subfolder entirely, since it
+      # belongs to a different repo's history.
+      - name: Link public project into private workspace
+        run: |
+          cd /tmp/private-data
+          ln -s /tmp/repo public-project
+          echo "public-project" >> .gitignore
+          git add .gitignore
+          git commit -m "Ignore public-project symlink in private repo" || true
+          echo "✅ Agent working directory: /tmp/private-data (root = private repo)"
+          echo "✅ Public project reachable at ./public-project/ — pushed only to the public repo"
 
       - name: Install ngrok
         run: |
@@ -46,13 +81,40 @@ jobs:
         run: |
           npm install -g opencode-ai
 
+      # ── System prompt now lives IN the private repo, not a secret ──────
+      # Edit /tmp/private-data/prompt.txt any time (even from inside the
+      # OpenCode web UI itself) — it's read fresh on every start/restart.
+      # First run creates a placeholder if the file doesn't exist yet.
+      - name: Set up cybersecurity agent prompt from private repo file
+        run: |
+          cd /tmp/private-data
+          if [ ! -f prompt.txt ]; then
+            cat > prompt.txt << 'EOF'
+          # Security Agent
+
+          Focus on security in all code reviews and implementations.
+
+          ## Guidelines
+          - Check for common vulnerabilities (SQLi, XSS, auth flaws, etc.)
+          - Validate all user inputs
+          - Flag insecure defaults and misconfigurations
+          - Never include real secrets/credentials in output
+          EOF
+            git add prompt.txt
+            git commit -m "Add default security agent prompt" || true
+            echo "ℹ️ prompt.txt did not exist — created a default. Edit it any time in the private repo."
+          fi
+          mkdir -p ~/.config/opencode/agent
+          cp prompt.txt ~/.config/opencode/agent/security.md
+          echo "✅ Cybersecurity agent prompt loaded from /tmp/private-data/prompt.txt"
+
       - name: Start OpenCode Web (with verification)
         run: |
-          cd /tmp/repo
-          export OPENCODE_DATA_DIR=/tmp/repo/.opencode
+          cd /tmp/private-data
+          export OPENCODE_DATA_DIR=/tmp/private-data/.opencode
 
           # Launch inside screen so it survives, logging to a file we can inspect
-          screen -dmS opencode bash -c "cd /tmp/repo && OPENCODE_DATA_DIR=/tmp/repo/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee /tmp/opencode.log"
+          screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 --agent security 2>&1 | tee /tmp/opencode.log"
 
           # Actively wait for it to respond instead of a blind sleep
           echo "⏳ Waiting for OpenCode Web to come up on port 3000..."
@@ -71,13 +133,14 @@ jobs:
 
       - name: Keep OpenCode Web alive (auto-restart watchdog)
         run: |
-          cd /tmp/repo
+          cd /tmp/private-data
           nohup bash -c '
             while true; do
               if ! curl -s -o /dev/null http://localhost:3000; then
                 echo "⚠️ OpenCode Web not responding, restarting..."
+                cp /tmp/private-data/prompt.txt ~/.config/opencode/agent/security.md
                 screen -S opencode -X quit || true
-                screen -dmS opencode bash -c "cd /tmp/repo && OPENCODE_DATA_DIR=/tmp/repo/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
+                screen -dmS opencode bash -c "cd /tmp/private-data && OPENCODE_DATA_DIR=/tmp/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 --agent security 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
@@ -92,28 +155,50 @@ jobs:
           echo "🔗 OpenCode Web URL: $OPENCODE_URL"
           echo "✅ Open this URL directly — it goes straight to the OpenCode Web UI, no terminal typing needed."
 
-      - name: Set up backup helper script
+      # ── Backup helpers: two independent repos, two independent pushes ──
+      - name: Set up backup helper scripts
         run: |
-          cat > /tmp/backup.sh << 'EOF'
+          cat > /tmp/backup-public.sh << 'EOF'
           #!/bin/bash
           cd /tmp/repo
           git add -A
           if git diff --staged --quiet; then
-            echo "ℹ️ No changes"
+            echo "ℹ️ No public changes"
           else
             git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin HEAD
-            echo "✅ Backup pushed"
+            echo "✅ Public backup pushed"
           fi
           EOF
-          chmod +x /tmp/backup.sh
+          chmod +x /tmp/backup-public.sh
 
-      - name: Periodic Git backup (every 60s)
+          cat > /tmp/backup-private.sh << 'EOF'
+          #!/bin/bash
+          cd /tmp/private-data
+          git add -A
+          if git diff --staged --quiet; then
+            echo "ℹ️ No private changes"
+          else
+            git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
+            git push origin HEAD
+            echo "✅ Private backup pushed"
+          fi
+          EOF
+          chmod +x /tmp/backup-private.sh
+
+          cat > /tmp/backup-all.sh << 'EOF'
+          #!/bin/bash
+          /tmp/backup-public.sh
+          /tmp/backup-private.sh
+          EOF
+          chmod +x /tmp/backup-all.sh
+
+      - name: Periodic Git backup (every 60s, both repos)
         run: |
           while true; do
             sleep 60
             echo "⏳ Backing up changes..."
-            /tmp/backup.sh
+            /tmp/backup-all.sh
           done &
           echo $! > /tmp/backup-loop.pid
 
@@ -121,13 +206,14 @@ jobs:
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "🔗 Check the OpenCode URL printed above."
-          echo "📂 All data stored in /tmp/repo and backed up every 60s"
+          echo "🔒 Agent root (default) → private repo, backed up every 60s"
+          echo "📂 ./public-project/    → public repo, backed up every 60s"
+          echo "🔒 prompt.txt           → private repo, backed up every 60s"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           finalize() {
             echo "🛑 Caught shutdown signal — running final backup before exit..."
-            /tmp/backup.sh
-            # Also stop the periodic loop cleanly so it doesn't race the final push
+            /tmp/backup-all.sh
             if [ -f /tmp/backup-loop.pid ]; then
               kill "$(cat /tmp/backup-loop.pid)" 2>/dev/null || true
             fi
@@ -136,8 +222,6 @@ jobs:
           }
           trap finalize SIGTERM SIGINT
 
-          # Wait in a loop (instead of a plain blocking command) so the trap
-          # can actually interrupt and run when a signal arrives.
           while true; do
             sleep 5 &
             wait $!
