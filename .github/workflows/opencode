@@ -1,0 +1,106 @@
+name: Persistent OpenCode Web
+on:
+  workflow_dispatch:
+
+jobs:
+  system:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+
+      - name: Update & install basics
+        run: |
+          sudo apt update
+          sudo apt install -y screen git curl wget nodejs npm
+
+      - name: Change password & hostname (optional)
+        run: |
+          echo -e "1234\n1234" | sudo passwd runner
+          sudo hostnamectl set-hostname ammar0xff
+
+      - name: Clone repo for persistence
+        run: |
+          cd /tmp
+          git clone https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git repo
+          cd repo
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+          git checkout $DEFAULT_BRANCH
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p .opencode
+          echo "✅ Work directory: /tmp/repo"
+
+      - name: Install ttyd (optional terminal)
+        run: |
+          sudo curl -sSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64" -o /usr/bin/ttyd
+          sudo chmod +x /usr/bin/ttyd
+
+      - name: Start ttyd on port 8080
+        run: |
+          export TERM=xterm
+          screen -dmS ttyd bash -c "ttyd --writable --port 8080 /bin/dash"
+          sleep 3
+          echo "ttyd running on port 8080"
+
+      - name: Install ngrok
+        run: |
+          sudo curl -sSL "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -o ngrok.tgz
+          sudo tar -xzvf ngrok.tgz
+          sudo rm ngrok.tgz
+          sudo mv ngrok /usr/bin
+          ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
+
+      - name: Expose ttyd via ngrok (random URL)
+        run: |
+          ngrok http 8080 > /tmp/ngrok-ttyd.log 2>&1 &
+          sleep 3
+          TTYD_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "🔗 ttyd terminal URL: $TTYD_URL"
+
+      - name: Install OpenCode
+        run: |
+          npm install -g opencode
+
+      - name: Start OpenCode Web
+        run: |
+          cd /tmp/repo
+          export OPENCODE_DATA_DIR=/tmp/repo/.opencode
+          screen -dmS opencode bash -c "opencode web --hostname 0.0.0.0 --port 3000"
+          sleep 5
+          echo "✅ OpenCode Web running on port 3000"
+
+      - name: Expose OpenCode Web via ngrok (random URL)
+        run: |
+          ngrok http 3000 > /tmp/ngrok-opencode.log 2>&1 &
+          sleep 3
+          OPENCODE_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "🔗 OpenCode Web URL: $OPENCODE_URL"
+          echo "✅ Copy the OpenCode URL above to access your editor."
+
+      - name: Periodic Git backup (every 5 min)
+        run: |
+          cd /tmp/repo
+          while true; do
+            sleep 300
+            echo "⏳ Backing up changes..."
+            git add -A
+            if git diff --staged --quiet; then
+              echo "ℹ️ No changes"
+            else
+              git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
+              git push origin HEAD
+              echo "✅ Backup pushed"
+            fi
+          done &
+
+      - name: Keep alive
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔗 Check the logs above for your URLs."
+          echo "📂 All data stored in /tmp/repo and backed up every 5 min"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          tail -f /dev/null
