@@ -25,16 +25,31 @@ jobs:
       env:
         RUN_ID: ${{ github.run_id }}
         GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
       run: |
         Start-Process -NoNewWindow -FilePath ".\bore.exe" -ArgumentList "local","3389","--to","bore.pub" -RedirectStandardOutput bore.log -RedirectStandardError bore.err
         $addr = $null
+        $token = $env:GH_TOKEN
+        $hdr = @{ "Authorization" = "Bearer $token"; "Accept" = "application/vnd.github+json" }
+        $name = "BORE_$env:RUN_ID"
+        $base = "https://api.github.com/repos/$env:REPO/actions/variables"
         for ($i = 0; $i -lt 90; $i++) {
           if (Test-Path bore.log) {
             $m = Select-String -Path bore.log -Pattern 'listening at bore\.pub:(\d+)'
             if ($m) {
               $port = $m.Matches[0].Groups[1].Value
               $addr = "bore.pub:$port"
-              gh variable set "BORE_$env:RUN_ID" --body "$addr" --repo ${{ github.repository }}
+              $body = @{ name = $name; value = $addr } | ConvertTo-Json
+              try {
+                Invoke-RestMethod -Uri "$base/$name" -Method Put -Headers $hdr -Body $body -ContentType "application/json" | Out-Null
+              } catch {
+                try {
+                  Invoke-RestMethod -Uri $base -Method Post -Headers $hdr -Body $body -ContentType "application/json" | Out-Null
+                } catch {
+                  Write-Host "WARN: failed to publish variable: $_"
+                }
+              }
+              Write-Host "Published tunnel address: $addr"
               break
             }
           }
@@ -47,5 +62,10 @@ jobs:
       env:
         RUN_ID: ${{ github.run_id }}
         GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
       run: |
-        gh variable delete "BORE_$env:RUN_ID" --repo ${{ github.repository }} 2>$null || true
+        $token = $env:GH_TOKEN
+        $hdr = @{ "Authorization" = "Bearer $token"; "Accept" = "application/vnd.github+json" }
+        $name = "BORE_$env:RUN_ID"
+        $base = "https://api.github.com/repos/$env:REPO/actions/variables"
+        try { Invoke-RestMethod -Uri "$base/$name" -Method Delete -Headers $hdr | Out-Null } catch {}
