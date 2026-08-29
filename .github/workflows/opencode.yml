@@ -125,8 +125,17 @@ jobs:
           # no separate copy step needed, no restart required for edits.
           ln -sf prompt.txt AGENTS.md
           git add AGENTS.md
-          git commit -m "Link AGENTS.md to prompt.txt" || true
-          echo "✅ Default system prompt active via $HOME/private-data/AGENTS.md → prompt.txt"
+
+          # Also register it as a SELECTABLE custom agent ("security" in the
+          # Build/Plan/security dropdown), stored inside the tracked repo
+          # (.opencode/agent/) so it persists across restarts on its own —
+          # no need to regenerate from a secret or global config each run.
+          mkdir -p .opencode/agent
+          ln -sf ../../prompt.txt .opencode/agent/security.md
+          git add .opencode/agent/security.md
+
+          git commit -m "Link AGENTS.md and security agent to prompt.txt" || true
+          echo "✅ Default instructions active via AGENTS.md, and 'security' agent selectable in the UI"
 
       - name: Start OpenCode Web (with verification)
         run: |
