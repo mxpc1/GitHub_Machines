@@ -21,8 +21,7 @@ jobs:
         run: |
           cd
           export TERM=xterm
-          # Use screen with a bash -c wrapper to preserve arguments
-          screen -dmS ttyd bash -c "ttyd --writable --port 8080 /bin/bash"
+          screen -dmS ttyd bash -c "ttyd --writable --port 8080 --renderer dom --max-frame-size 4096 /bin/bash --norc --noediting"
           sleep 3
           if ! curl -s -o /dev/null -I "http://localhost:8080"; then
             echo "ERROR: ttyd failed to start. Dumping screen log:"
