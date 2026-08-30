@@ -87,6 +87,26 @@ jobs:
           ln -s $HOME/private-data/opencode-storage $HOME/.local/share/opencode
           echo "✅ ~/.local/share/opencode now points into the private repo"
 
+      # /tmp/reports LOOKS like a normal folder under /tmp, but is actually
+      # physically inside the private repo — so anything written there is
+      # already part of the tracked tree, picked up by the same 15s backup
+      # loop with zero extra "scanning" logic needed.
+      - name: Redirect /tmp/reports into private repo
+        run: |
+          mkdir -p $HOME/private-data/reports
+          rm -rf /tmp/reports
+          ln -s $HOME/private-data/reports /tmp/reports
+          echo "✅ /tmp/reports now points into the private repo — backed up every 15s"
+
+      # OpenCode itself appears to use /tmp/opencode as a default working
+      # dir for some outputs — redirect that one too, same technique.
+      - name: Redirect /tmp/opencode into private repo
+        run: |
+          mkdir -p $HOME/private-data/tmp-opencode
+          rm -rf /tmp/opencode
+          ln -s $HOME/private-data/tmp-opencode /tmp/opencode
+          echo "✅ /tmp/opencode now points into the private repo — backed up every 15s"
+
       - name: Install ngrok
         run: |
           sudo curl -sSL "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -o ngrok.tgz
