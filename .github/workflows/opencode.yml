@@ -189,17 +189,22 @@ jobs:
           cat > /tmp/backup-public.sh << 'EOF'
           #!/bin/bash
           cd $HOME/repo
+          # Stage + commit any local changes first (so a pull can rebase cleanly)
           git add -A
-          if git diff --staged --quiet; then
-            echo "ℹ️ No public changes"
-          else
+          if ! git diff --staged --quiet; then
             git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
-            git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+          fi
+          # Always pull, so edits made directly on GitHub show up here too
+          git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+          # Push only if we actually have local commits ahead of origin
+          if [ -n "$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
             if git push origin HEAD; then
               echo "✅ Public backup pushed"
             else
               echo "❌ Public push FAILED — check auth/permissions"
             fi
+          else
+            echo "ℹ️ No public changes to push"
           fi
           EOF
           chmod +x /tmp/backup-public.sh
@@ -208,16 +213,18 @@ jobs:
           #!/bin/bash
           cd $HOME/private-data
           git add -A
-          if git diff --staged --quiet; then
-            echo "ℹ️ No private changes"
-          else
+          if ! git diff --staged --quiet; then
             git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
-            git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+          fi
+          git pull --rebase origin HEAD --autostash 2>&1 | tail -3
+          if [ -n "$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
             if git push origin HEAD; then
               echo "✅ Private backup pushed"
             else
               echo "❌ Private push FAILED — check auth/permissions"
             fi
+          else
+            echo "ℹ️ No private changes to push"
           fi
           EOF
           chmod +x /tmp/backup-private.sh
