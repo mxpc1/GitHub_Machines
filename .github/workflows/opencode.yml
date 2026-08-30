@@ -16,6 +16,11 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y screen git curl wget nodejs npm jq
+          # Prevent git from ever falling back to an interactive credential
+          # prompt (e.g. GCM trying to open a TTY during shutdown) — force
+          # it to rely solely on the token already embedded in remote URLs.
+          git config --global credential.helper ""
+          git config --global core.askpass ""
 
       - name: Change password & hostname (optional)
         run: |
