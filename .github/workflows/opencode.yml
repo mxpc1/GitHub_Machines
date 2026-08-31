@@ -176,18 +176,39 @@ jobs:
           fi
           echo "✅ Default instructions active via AGENTS.md, 'security' agent selectable in the UI, and set as default_agent"
 
-      - name: Start OpenCode CLI in a web terminal (ttyd, with verification)
+      - name: Start OpenCode server (persistent backend, with verification)
         run: |
           export TERM=xterm
           export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
 
-          # ttyd serves a web terminal on port 8080, running `opencode`
-          # (the CLI/TUI) directly as its target program — so opening the
-          # URL drops you straight into a live opencode session, already
-          # cd'd into your private workspace. No typing "opencode" needed.
-          screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c 'cd $HOME/private-data && exec opencode --agent security' 2>&1 | tee /tmp/opencode.log"
+          # This is the ONE long-running backend that holds all live
+          # session state in memory. It stays up for the whole job.
+          screen -dmS opencode-server bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; cd $HOME/private-data && opencode serve --hostname 127.0.0.1 --port 4096 2>&1 | tee /tmp/opencode-server.log"
 
-          echo "⏳ Waiting for ttyd to come up on port 8080..."
+          echo "⏳ Waiting for OpenCode server on port 4096..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:4096 | grep -qE "200|301|302|404"; then
+              echo "✅ OpenCode server is responding on port 4096"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "❌ OpenCode server did not start in time. Log output:"
+              cat /tmp/opencode-server.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Start web terminal (ttyd attaches to the persistent server)
+        run: |
+          export TERM=xterm
+
+          # Each browser connection gets a fresh TUI *client*, but it
+          # attaches to the SAME already-running server/session above —
+          # so refreshing the page no longer loses context or history.
+          screen -dmS opencode-ttyd bash -c "export TERM=xterm; ttyd --writable --port 8080 bash -c 'cd $HOME/private-data && exec opencode attach http://127.0.0.1:4096' 2>&1 | tee /tmp/opencode.log"
+
+          echo "⏳ Waiting for ttyd on port 8080..."
           for i in $(seq 1 30); do
             if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 | grep -qE "200|301|302"; then
               echo "✅ ttyd (opencode terminal) is responding on port 8080"
@@ -201,21 +222,31 @@ jobs:
             sleep 2
           done
 
-      - name: Keep ttyd/OpenCode alive (auto-restart watchdog)
+      - name: Keep server and ttyd alive (auto-restart watchdog)
         run: |
           nohup bash -c '
             while true; do
-              if ! curl -s -o /dev/null http://localhost:8080; then
-                echo "⚠️ ttyd not responding, restarting..."
-                screen -S opencode -X quit || true
+              # The persistent backend — restarting this loses in-memory
+              # session state, so this should be rare (crash-only).
+              if ! curl -s -o /dev/null http://localhost:4096; then
+                echo "⚠️ OpenCode server not responding, restarting..."
+                screen -S opencode-server -X quit || true
                 export TERM=xterm
                 export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
-                screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c \"cd $HOME/private-data && exec opencode --agent security\" 2>&1 | tee -a /tmp/opencode.log"
+                screen -dmS opencode-server bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; cd $HOME/private-data && opencode serve --hostname 127.0.0.1 --port 4096 2>&1 | tee -a /tmp/opencode-server.log"
+              fi
+              # The ttyd client shell — safe to restart freely, it holds
+              # no state of its own, it just re-attaches to the server.
+              if ! curl -s -o /dev/null http://localhost:8080; then
+                echo "⚠️ ttyd not responding, restarting..."
+                screen -S opencode-ttyd -X quit || true
+                export TERM=xterm
+                screen -dmS opencode-ttyd bash -c "export TERM=xterm; ttyd --writable --port 8080 bash -c \"cd $HOME/private-data && exec opencode attach http://127.0.0.1:4096\" 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
           ' > /tmp/watchdog.log 2>&1 &
-          echo "✅ Watchdog started to keep the opencode terminal alive"
+          echo "✅ Watchdog started to keep the server and terminal alive"
 
       - name: Expose opencode terminal via ngrok (single tunnel)
         run: |
