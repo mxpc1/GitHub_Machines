@@ -21,6 +21,9 @@ jobs:
           # it to rely solely on the token already embedded in remote URLs.
           git config --global credential.helper ""
           git config --global core.askpass ""
+          # actions/checkout can leave a global auth override that leaks
+          # into unrelated manual clones — strip it so it can't interfere.
+          git config --global --unset-all http.https://github.com/.extraheader || true
 
       - name: Change password & hostname (optional)
         run: |
@@ -259,18 +262,16 @@ jobs:
       # ── Backup helpers: two independent repos, two independent pushes ──
       - name: Set up backup helper scripts
         run: |
-          cat > /tmp/backup-public.sh << 'EOF'
+          cat > /tmp/backup-public.sh << EOF
           #!/bin/bash
-          cd $HOME/repo
-          # Stage + commit any local changes first (so a pull can rebase cleanly)
+          cd \$HOME/repo
+          git remote set-url origin https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git add -A
           if ! git diff --staged --quiet; then
-            git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "Auto-backup \$(date +'%Y-%m-%d %H:%M:%S')"
           fi
-          # Always pull, so edits made directly on GitHub show up here too
           git pull --rebase origin HEAD --autostash 2>&1 | tail -3
-          # Push only if we actually have local commits ahead of origin
-          if [ -n "$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
+          if [ -n "\$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
             if git push origin HEAD; then
               echo "✅ Public backup pushed"
             else
@@ -282,15 +283,16 @@ jobs:
           EOF
           chmod +x /tmp/backup-public.sh
 
-          cat > /tmp/backup-private.sh << 'EOF'
+          cat > /tmp/backup-private.sh << EOF
           #!/bin/bash
-          cd $HOME/private-data
+          cd \$HOME/private-data
+          git remote set-url origin https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/${{ secrets.PRIVATE_DATA_REPO }}.git
           git add -A
           if ! git diff --staged --quiet; then
-            git commit -m "Auto-backup $(date +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "Auto-backup \$(date +'%Y-%m-%d %H:%M:%S')"
           fi
           git pull --rebase origin HEAD --autostash 2>&1 | tail -3
-          if [ -n "$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
+          if [ -n "\$(git log origin/HEAD..HEAD 2>/dev/null)" ]; then
             if git push origin HEAD; then
               echo "✅ Private backup pushed"
             else
