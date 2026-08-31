@@ -107,6 +107,11 @@ jobs:
           ln -s $HOME/private-data/tmp-opencode /tmp/opencode
           echo "✅ /tmp/opencode now points into the private repo — backed up every 15s"
 
+      - name: Install ttyd
+        run: |
+          sudo curl -sSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64" -o /usr/bin/ttyd
+          sudo chmod +x /usr/bin/ttyd
+
       - name: Install ngrok
         run: |
           sudo curl -sSL "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -o ngrok.tgz
@@ -162,51 +167,54 @@ jobs:
           git commit -m "Link AGENTS.md and security agent to prompt.txt" || true
           echo "✅ Default instructions active via AGENTS.md, and 'security' agent selectable in the UI"
 
-      - name: Start OpenCode Web (with verification)
+      - name: Start OpenCode CLI in a web terminal (ttyd, with verification)
         run: |
-          cd $HOME/private-data
+          export TERM=xterm
           export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
 
-          # Launch inside screen so it survives, logging to a file we can inspect
-          screen -dmS opencode bash -c "cd $HOME/private-data && OPENCODE_DATA_DIR=$HOME/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee /tmp/opencode.log"
+          # ttyd serves a web terminal on port 8080, running `opencode`
+          # (the CLI/TUI) directly as its target program — so opening the
+          # URL drops you straight into a live opencode session, already
+          # cd'd into your private workspace. No typing "opencode" needed.
+          screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c 'cd $HOME/private-data && exec opencode' 2>&1 | tee /tmp/opencode.log"
 
-          # Actively wait for it to respond instead of a blind sleep
-          echo "⏳ Waiting for OpenCode Web to come up on port 3000..."
+          echo "⏳ Waiting for ttyd to come up on port 8080..."
           for i in $(seq 1 30); do
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 | grep -qE "200|301|302"; then
-              echo "✅ OpenCode Web is responding on port 3000"
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 | grep -qE "200|301|302"; then
+              echo "✅ ttyd (opencode terminal) is responding on port 8080"
               break
             fi
             if [ "$i" -eq 30 ]; then
-              echo "❌ OpenCode Web did not start in time. Log output:"
+              echo "❌ ttyd did not start in time. Log output:"
               cat /tmp/opencode.log || true
               exit 1
             fi
             sleep 2
           done
 
-      - name: Keep OpenCode Web alive (auto-restart watchdog)
+      - name: Keep ttyd/OpenCode alive (auto-restart watchdog)
         run: |
-          cd $HOME/private-data
           nohup bash -c '
             while true; do
-              if ! curl -s -o /dev/null http://localhost:3000; then
-                echo "⚠️ OpenCode Web not responding, restarting..."
+              if ! curl -s -o /dev/null http://localhost:8080; then
+                echo "⚠️ ttyd not responding, restarting..."
                 screen -S opencode -X quit || true
-                screen -dmS opencode bash -c "cd $HOME/private-data && OPENCODE_DATA_DIR=$HOME/private-data/.opencode opencode web --hostname 0.0.0.0 --port 3000 2>&1 | tee -a /tmp/opencode.log"
+                export TERM=xterm
+                export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
+                screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c \"cd $HOME/private-data && exec opencode\" 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
           ' > /tmp/watchdog.log 2>&1 &
-          echo "✅ Watchdog started to keep OpenCode Web alive"
+          echo "✅ Watchdog started to keep the opencode terminal alive"
 
-      - name: Expose OpenCode Web via ngrok (single tunnel)
+      - name: Expose opencode terminal via ngrok (single tunnel)
         run: |
-          nohup ngrok http 3000 --log=stdout > /tmp/ngrok-opencode.log 2>&1 &
+          nohup ngrok http 8080 --log=stdout > /tmp/ngrok-opencode.log 2>&1 &
           sleep 5
           OPENCODE_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          echo "🔗 OpenCode Web URL: $OPENCODE_URL"
-          echo "✅ Open this URL directly — it goes straight to the OpenCode Web UI, no terminal typing needed."
+          echo "🔗 OpenCode Terminal URL: $OPENCODE_URL"
+          echo "✅ Open this URL directly — it drops you straight into a running opencode session, no typing required."
 
       # ── Backup helpers: two independent repos, two independent pushes ──
       - name: Set up backup helper scripts
