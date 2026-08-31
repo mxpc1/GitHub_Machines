@@ -165,7 +165,16 @@ jobs:
           git add .opencode/agent/security.md
 
           git commit -m "Link AGENTS.md and security agent to prompt.txt" || true
-          echo "✅ Default instructions active via AGENTS.md, and 'security' agent selectable in the UI"
+
+          # Also set it as the default agent at the config level — this
+          # applies across every interface (TUI, CLI, web), so it's
+          # selected automatically even if the launch flag is ever missed.
+          if [ ! -f opencode.json ]; then
+            echo '{"default_agent": "security"}' > opencode.json
+            git add opencode.json
+            git commit -m "Set default_agent to security" || true
+          fi
+          echo "✅ Default instructions active via AGENTS.md, 'security' agent selectable in the UI, and set as default_agent"
 
       - name: Start OpenCode CLI in a web terminal (ttyd, with verification)
         run: |
@@ -176,7 +185,7 @@ jobs:
           # (the CLI/TUI) directly as its target program — so opening the
           # URL drops you straight into a live opencode session, already
           # cd'd into your private workspace. No typing "opencode" needed.
-          screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c 'cd $HOME/private-data && exec opencode' 2>&1 | tee /tmp/opencode.log"
+          screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c 'cd $HOME/private-data && exec opencode --agent security' 2>&1 | tee /tmp/opencode.log"
 
           echo "⏳ Waiting for ttyd to come up on port 8080..."
           for i in $(seq 1 30); do
@@ -201,7 +210,7 @@ jobs:
                 screen -S opencode -X quit || true
                 export TERM=xterm
                 export OPENCODE_DATA_DIR=$HOME/private-data/.opencode
-                screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c \"cd $HOME/private-data && exec opencode\" 2>&1 | tee -a /tmp/opencode.log"
+                screen -dmS opencode bash -c "export TERM=xterm; export OPENCODE_DATA_DIR=$HOME/private-data/.opencode; ttyd --writable --port 8080 bash -c \"cd $HOME/private-data && exec opencode --agent security\" 2>&1 | tee -a /tmp/opencode.log"
               fi
               sleep 15
             done
